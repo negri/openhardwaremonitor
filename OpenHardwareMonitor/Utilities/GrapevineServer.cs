@@ -52,6 +52,7 @@ namespace OpenHardwareMonitor.Utilities
                 var builder = RestServerBuilder.From<ServerConfig>();
                 server = builder.Build();
                 server.Start();
+                _logger.LogInformation($"Web server started: {server.IsListening}, port {port}");
                 return server.IsListening;
             }
             catch (Exception x)
