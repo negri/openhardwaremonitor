@@ -20,8 +20,12 @@ namespace OpenHardwareMonitor
 {
     public class PersistentSettings : ISettings
     {
+        private bool dirtyFlag = false;
         private readonly IDictionary<string, string> _settings =
           new Dictionary<string, string>();
+
+        public bool IsDirty => dirtyFlag;
+
 
         public void Load(string fileName)
         {
@@ -134,6 +138,7 @@ namespace OpenHardwareMonitor
 
         public void SetValue(string name, string value)
         {
+            dirtyFlag = true;
             _settings[name] = value;
         }
 
@@ -153,6 +158,7 @@ namespace OpenHardwareMonitor
 
         public void SetValue(string name, int value)
         {
+            dirtyFlag = true;
             _settings[name] = value.ToString();
         }
 
@@ -179,6 +185,7 @@ namespace OpenHardwareMonitor
 
         public void SetValue(string name, float value)
         {
+            dirtyFlag = true;
             _settings[name] = value.ToString(CultureInfo.InvariantCulture);
         }
 
@@ -206,6 +213,7 @@ namespace OpenHardwareMonitor
 
         public void SetValue(string name, bool value)
         {
+            dirtyFlag = true;
             _settings[name] = value ? "true" : "false";
         }
 
@@ -224,6 +232,7 @@ namespace OpenHardwareMonitor
 
         public void SetValue(string name, Color color)
         {
+            dirtyFlag = true;
             _settings[name] = color.ToArgb().ToString("X8");
         }
 
