@@ -32,6 +32,7 @@ namespace OpenHardwareMonitor.GUI
     {
 
         private PersistentSettings settings;
+        private PersistentSettings basicSettings;
         private UnitManager unitManager;
         private Computer computer;
         private Node root;
@@ -77,7 +78,7 @@ namespace OpenHardwareMonitor.GUI
         private UserOption logSensors;
         private UserRadioGroup loggingInterval;
         private Logger m_valueLogger;
-        private SecondInstanceService secondInstanceService;
+        private readonly SecondInstanceService secondInstanceService = new SecondInstanceService();
 
         private bool selectionDragging = false;
 
@@ -95,11 +96,14 @@ namespace OpenHardwareMonitor.GUI
                 Environment.Exit(0);
             }
 
-            this.settings = new PersistentSettings();
+            settings = new PersistentSettings();
+            basicSettings = new PersistentSettings();
             if (!Program.Arguments.DoNotLoadConfiguration)
             {
-                this.settings.Load(Path.ChangeExtension(
+                settings.Load(Path.ChangeExtension(
                   Application.ExecutablePath, ".config"));
+                basicSettings.Load(Path.ChangeExtension(
+                    Application.ExecutablePath, ".settings"));
             }
 
             this.unitManager = new UnitManager(settings);
@@ -202,7 +206,7 @@ namespace OpenHardwareMonitor.GUI
             timer.Enabled = true;
 
             showHiddenSensors = new UserOption("hiddenMenuItem", false,
-              hiddenMenuItem, settings);
+              hiddenMenuItem, basicSettings);
             showHiddenSensors.Changed += delegate (object sender, EventArgs e)
             {
                 treeModel.ForceVisible = showHiddenSensors.Value;
@@ -228,10 +232,10 @@ namespace OpenHardwareMonitor.GUI
             };
 
             startMinimized = new UserOption("startMinMenuItem", false,
-              startMinMenuItem, settings, () => Program.Arguments.StartMinimized ? true : null);
+              startMinMenuItem, basicSettings, () => Program.Arguments.StartMinimized ? true : null);
 
             minimizeToTray = new UserOption("minTrayMenuItem", true,
-              minTrayMenuItem, settings, () => Program.Arguments.MinimizeToTray ? true : null);
+              minTrayMenuItem, basicSettings, () => Program.Arguments.MinimizeToTray ? true : null);
 
             // Force a refresh of the icon state
             systemTray.IsMainIconEnabled = minimizeToTray.Value;
@@ -242,10 +246,10 @@ namespace OpenHardwareMonitor.GUI
             };
 
             minimizeOnClose = new UserOption("minCloseMenuItem", false,
-              minCloseMenuItem, settings);
+              minCloseMenuItem, basicSettings);
 
             autoStart = new UserOption(null, startupManager.IsAutoStartupEnabled && !startupManager.IsStartupAsService,
-              startupMenuItem, settings, () =>
+              startupMenuItem, basicSettings, () =>
               {
                   if (Program.Arguments.AutoStartupMode == AutoStartupMode.NoChange)
                   {
@@ -260,7 +264,7 @@ namespace OpenHardwareMonitor.GUI
                   return false;
               });
 
-            autoStartAsService = new UserOption(null, startupManager.IsStartupAsService, runAsServiceMenuItem, settings, () =>
+            autoStartAsService = new UserOption(null, startupManager.IsStartupAsService, runAsServiceMenuItem, basicSettings, () =>
             {
                 if (Program.Arguments.AutoStartupMode == AutoStartupMode.NoChange)
                 {
@@ -401,14 +405,14 @@ namespace OpenHardwareMonitor.GUI
               unitManager.TemperatureUnit == TemperatureUnit.Celsius;
             fahrenheitMenuItem.Checked = !celsiusMenuItem.Checked;
 
-            HttpServerPort = this.settings.GetValue("listenerPort", 8086);
+            HttpServerPort = this.basicSettings.GetValue("listenerPort", 8086);
             if (Program.Arguments.WebServerPort.HasValue)
             {
                 HttpServerPort = Program.Arguments.WebServerPort.Value;
             }
 
             allowWebServerRemoteAccess = new UserOption("allowRemoteAccessMenuItem", false, allowRemoteAccessToolStripMenuItem,
-                settings, () => Program.Arguments.AllowRemoteAccess ? true : null);
+                basicSettings, () => Program.Arguments.AllowRemoteAccess ? true : null);
 
             allowWebServerRemoteAccess.Changed += (sender, e) =>
             {
@@ -419,8 +423,8 @@ namespace OpenHardwareMonitor.GUI
             };
 
             server = new GrapevineServer(root, computer, HttpServerPort, allowWebServerRemoteAccess.Value);
-            runWebServer = new UserOption("runWebServerMenuItem", false,
-              runWebServerMenuItem, settings, () => Program.Arguments.RunWebServer ? true : null);
+            runWebServer = new UserOption("runWebServer", false,
+              runWebServerMenuItem, basicSettings, () => Program.Arguments.RunWebServer ? true : null);
             runWebServer.Changed += delegate (object sender, EventArgs e)
             {
                 if (runWebServer.Value)
@@ -431,20 +435,18 @@ namespace OpenHardwareMonitor.GUI
                     server.Start();
                 }
                 else
-                {
                     server.Stop();
-                }
             };
 
             logSensors = new UserOption("logSensorsMenuItem", false, logSensorsMenuItem,
-              settings);
+                basicSettings);
 
             loggingInterval = new UserRadioGroup("loggingInterval", 0,
               new[] { log1sMenuItem, log2sMenuItem, log5sMenuItem, log10sMenuItem,
         log30sMenuItem, log1minMenuItem, log2minMenuItem, log5minMenuItem,
         log10minMenuItem, log30minMenuItem, log1hMenuItem, log2hMenuItem,
         log6hMenuItem},
-              settings);
+              basicSettings);
             loggingInterval.Changed += (sender, e) =>
             {
                 switch (loggingInterval.Value)
@@ -495,12 +497,8 @@ namespace OpenHardwareMonitor.GUI
             };
 
             treeView.ExpandAll();
-            if (!Program.Arguments.CloseAll) // Won't work, because the other instance already owns the server side end of the pipe
-            {
-                secondInstanceService = new SecondInstanceService();
-                secondInstanceService.Run();
-                secondInstanceService.OnSecondInstanceRequest += HandleSecondInstanceRequest;
-            }
+            secondInstanceService.Run();
+            secondInstanceService.OnSecondInstanceRequest += HandleSecondInstanceRequest;
         }
 
         private void HandleSecondInstanceRequest(SecondInstanceService.SecondInstanceRequest requestType)
@@ -835,26 +833,55 @@ namespace OpenHardwareMonitor.GUI
 
             if (server != null)
             {
-                this.settings.SetValue("listenerPort", server.ListenerPort);
+                var serverPort = this.basicSettings.GetValue("listenerPort", 8086);
+                if (serverPort != server.ListenerPort)
+                {
+                    this.basicSettings.SetValue("listenerPort", server.ListenerPort);
+                }
+            }
+
+            string basicFileName = Path.ChangeExtension(
+                System.Windows.Forms.Application.ExecutablePath, ".settings");
+            try
+            {
+                if (basicSettings.IsDirty)
+                {
+                    basicSettings.Save(basicFileName);
+                }
+            }
+            catch (UnauthorizedAccessException)
+            {
+                MessageBox.Show("Access to the path '" + basicFileName + "' is denied. " +
+                                "The current basic settings could not be saved.",
+                    "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            catch (IOException)
+            {
+                MessageBox.Show("The path '" + basicFileName + "' is not writeable. " +
+                                "The current basic settings could not be saved.",
+                    "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
 
             string fileName = Path.ChangeExtension(
                 System.Windows.Forms.Application.ExecutablePath, ".config");
             try
             {
-                settings.Save(fileName);
+                if (settings.IsDirty)
+                {
+                    settings.Save(fileName);
+                }
             }
             catch (UnauthorizedAccessException)
             {
                 MessageBox.Show("Access to the path '" + fileName + "' is denied. " +
-                  "The current settings could not be saved.",
-                  "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                                "The current settings could not be saved.",
+                    "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
             catch (IOException)
             {
                 MessageBox.Show("The path '" + fileName + "' is not writeable. " +
-                  "The current settings could not be saved.",
-                  "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                                "The current settings could not be saved.",
+                    "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
@@ -946,7 +973,6 @@ namespace OpenHardwareMonitor.GUI
                     {
                         process.Kill();
                         process.WaitForExit(5000);
-                        System.Threading.Thread.Sleep(1000); // Make sure OS has closed all handles
                     }
                 }
                 catch (UnauthorizedAccessException)
@@ -1309,12 +1335,8 @@ namespace OpenHardwareMonitor.GUI
 
         protected override void OnClosed(EventArgs e)
         {
-            if (secondInstanceService != null)
-            {
-                secondInstanceService.OnSecondInstanceRequest -= HandleSecondInstanceRequest;
-                secondInstanceService.Dispose();
-            }
-
+            secondInstanceService.OnSecondInstanceRequest -= HandleSecondInstanceRequest;
+            secondInstanceService.Dispose();
             base.OnClosed(e);
         }
     }
