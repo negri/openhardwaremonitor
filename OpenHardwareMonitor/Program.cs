@@ -28,22 +28,24 @@ namespace OpenHardwareMonitor
     {
         internal static CommandLineOptions Arguments;
         [STAThread]
-        public static void Main(string[] args)
+        public static int Main(string[] args)
         {
             if (!AllRequiredFilesAvailable())
-                return;
+                return 1;
 
             InstallAndConfigureNlog();
 
+            Logging.LogInfo("Command line arguments: " + string.Join(' ', args));
+
             if (!ParseCommandLine(args))
             {
-                return;
+                return 1;
             }
 
             // If closeall is specified, we need to continue, so we can later kill the other instance
             if (Arguments.CloseAll == false && CheckIfProcessExists())
             {
-                return;
+                return 1;
             }
 
             Application.EnableVisualStyles();
@@ -64,6 +66,9 @@ namespace OpenHardwareMonitor
                     form.ForceClose();
                 }
             }
+
+            Logging.LogInfo("Terminating session");
+            return 0;
         }
 
         private static void InstallAndConfigureNlog()

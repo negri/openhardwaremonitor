@@ -115,7 +115,7 @@ Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{commondesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Parameters: "--autostartupmode logon --closeall --startminimized --minimizetotray --run"; Flags: waituntilterminated; Description: "Performing post-install tasks"; Tasks: autostart
+Filename: "{app}\{#MyAppExeName}"; Parameters: "--autostartupmode logon --closeall --startminimized --minimizetotray --run"; Flags: waituntilterminated; Description: "Performing post-install tasks"; Tasks: autostart; AfterInstall: DumpAllLogFiles
 Filename: "{app}\{#MyAppExeName}"; Parameters: "--startnormal"; Flags: nowait postinstall skipifsilent runascurrentuser; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"
 
 [UninstallRun]
@@ -123,6 +123,7 @@ Filename: "{app}\{#MyAppExeName}"; Parameters: "--autostartupmode disable --clos
 
 [UninstallDelete]
 Type: files; Name: "{app}\OpenHardwareMonitor.config"
+Type: files; Name: "{app}\OpenHardwareMonitor.config.backup"
 Type: files; Name: "{app}\OpenHardwareMonitorLib.sys"
 
 [InstallDelete]
@@ -148,6 +149,49 @@ end;
 function IsUpgrade(): Boolean;
 begin
     Result := (GetUninstallString() <> '');
+end;
+
+procedure CollectLogFile(logFilePath: String);
+var
+  logFileEntries: array of string;
+  i : Integer;
+begin
+    // Load the text file specified as argument and append it to the installation log
+    if not LoadStringsFromFile(logFilePath, logFileEntries) then
+    begin
+        Log('Database installer logfile ' + logFilePath + ' not found. ');
+        exit;
+    end;
+    Log('--- Dump of logfile ' + logFilePath + ' follows ----');
+    for i := 0 to GetArrayLength(logFileEntries)-1 do
+    begin
+        Log(logFileEntries[i]);
+    end;
+    Log('--- End of dump ----');
+end;
+
+procedure DumpAllLogFiles();
+var 
+  tempDir: string;
+  FilesFound: integer;
+  FindRec: TFindRec;
+begin
+  tempDir := GetEnv('TEMP');
+  FilesFound := 0;
+  if FindFirst(tempDir + '\OHM*.log', FindRec) then begin
+    try
+      repeat
+        // Don't count directories
+        if FindRec.Attributes and FILE_ATTRIBUTE_DIRECTORY = 0 then
+        begin
+          FilesFound := FilesFound + 1;
+          CollectLogFile(tempDir + '\' + FindRec.Name);
+        end;
+      until not FindNext(FindRec);
+    finally
+      FindClose(FindRec);
+    end;
+  end;
 end;
 
 /////////////////////////////////////////////////////////////////////
