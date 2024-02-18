@@ -1,29 +1,17 @@
-﻿using CliFx;
+﻿using System.Diagnostics;
+using CliFx;
 using CliFx.Attributes;
 using CliFx.Exceptions;
 using CliFx.Infrastructure;
 using OpenHardwareMonitor.Hardware;
-using System.Collections.Generic;
-using System.Diagnostics;
 
-namespace OpenHardwareMonitor.Mqtt;
+namespace OpenHardwareMonitor.Pub;
 
-[Command(Description = "Monitors this machine hardware and publish values to a MQTT broker.")]
-public class MonitorCommand : ICommand
+/// <summary>
+/// Base class for the publishing commands
+/// </summary>
+public abstract class PubCommandBase : ICommand
 {
-
-    [CommandParameter(0, Description = "Address or name of a MQTT broker", Name = nameof(Broker))]
-    public string Broker { get; set; } = string.Empty;
-
-    [CommandOption(nameof(Port), 'p', Description = "Port number the MQTT broker is listening.")]
-    public int Port { get; set; } = 1883;
-
-    [CommandOption(nameof(UseTls), Description = "If TLS should be used.")]
-    public bool UseTls { get; set; } = false;
-
-    [CommandOption(nameof(ValidateTlsCert), Description = "If TLS certificates should be validated.")]
-    public bool ValidateTlsCert { get; set; } = true;
-
     [CommandOption(nameof(Verbose), 'v', Description = "Verbose output.")]
     public bool Verbose { get; set; } = false;
 
@@ -44,34 +32,7 @@ public class MonitorCommand : ICommand
 
     public async ValueTask ExecuteAsync(IConsole console)
     {
-        if (string.IsNullOrWhiteSpace(Broker))
-        {
-            throw new CommandException("A broker must be supplied.", 2);
-        }
-
-        if (SensorTypes.Count <= 0)
-        {
-            throw new CommandException("At least one sensor type must be pooled.", 2);
-        }
-        var sensors = new HashSet<SensorType>(SensorTypes);
-
-        if (Components.Count <= 0)
-        {
-            throw new CommandException("At least one component must be pooled.", 2);
-        }
-        var components = Components.Aggregate(Component.None, (current, c) => current | c);
-        if (components == Component.None)
-        {
-            throw new CommandException("At least one component must be pooled.", 2);
-        }
-
-        if (DoAdminCheck)
-        {
-            if (!IsUserAdministrator())
-            {
-                throw new CommandException("This command requires administrative privileges to execute.", 1);
-            }
-        }
+        DoParametersValidation();
 
         var verboseOutput = Verbose ? console.Output : null;
 
@@ -79,22 +40,30 @@ public class MonitorCommand : ICommand
         {
             var computer = new Computer
             {
-                CPUEnabled = components.HasFlag(Component.Cpu),
-                FanControllerEnabled = components.HasFlag(Component.Fan),
-                GPUEnabled = components.HasFlag(Component.Fan),
-                HDDEnabled = components.HasFlag(Component.Storage),
-                MainboardEnabled = components.HasFlag(Component.MainBoard),
-                NetworkEnabled = components.HasFlag(Component.Network),
-                RAMEnabled = components.HasFlag(Component.Ram)
+                CPUEnabled = Components.Contains(Component.Cpu),
+                FanControllerEnabled = Components.Contains(Component.Fan),
+                GPUEnabled = Components.Contains(Component.Gpu),
+                HDDEnabled = Components.Contains(Component.Storage),
+                MainboardEnabled = Components.Contains(Component.MainBoard),
+                NetworkEnabled = Components.Contains(Component.Network),
+                RAMEnabled = Components.Contains(Component.Ram)
             };
 
             computer.Open();
 
             var visitor = new SensorVisitor(sensor =>
             {
+                if (!SensorTypes.Contains(sensor.SensorType))
+                {
+                    return;
+                }
+
+                verboseOutput?.WriteLine($"S {sensor.SensorType}: {sensor.Identifier}: {sensor.Name} = {sensor.Value}");
+
                 HandleSensor(sensor, verboseOutput);
+                
             });
-                        
+
             var cancellation = console.RegisterCancellationHandler();
 
             var keepPooling = Pooling;
@@ -127,13 +96,13 @@ public class MonitorCommand : ICommand
                 {
                     verboseOutput?.WriteLine();
                 }
-               
+
             } while (keepPooling);
 
             computer.Close();
         }
         catch (CommandException)
-        {            
+        {
             throw;
         }
         catch (TaskCanceledException)
@@ -146,19 +115,36 @@ public class MonitorCommand : ICommand
             throw new CommandException("Unknown exception!", 999, false, ex);
         }
 
+        return;
     }
 
-    private void HandleSensor(ISensor sensor, TextWriter? verbose)
+    /// <summary>
+    /// Handles a sensor reading
+    /// </summary>
+    protected abstract void HandleSensor(ISensor sensor, ConsoleWriter? verboseOutput);
+
+    protected virtual void DoParametersValidation()
     {
-        if (!SensorTypes.Contains(sensor.SensorType))
+        if (SensorTypes.Count <= 0)
         {
-            return;
+            throw new CommandException("At least one sensor type must be pooled.", 2);
         }
 
-        verbose?.WriteLine($"S {sensor.SensorType}: {sensor.Identifier}: {sensor.Name} = {sensor.Value}");
+        if (Components.Count <= 0)
+        {
+            throw new CommandException("At least one component must be pooled.", 2);
+        }
+       
+        if (DoAdminCheck)
+        {
+            if (!IsUserAdministrator())
+            {
+                throw new CommandException("This command requires administrative privileges to execute.", 1);
+            }
+        }
     }
 
-    static bool IsUserAdministrator()
+    private static bool IsUserAdministrator()
     {
         bool isAdmin;
         try

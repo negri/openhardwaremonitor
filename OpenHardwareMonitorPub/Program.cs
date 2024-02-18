@@ -1,6 +1,6 @@
 ﻿using CliFx;
 
-namespace OpenHardwareMonitor.Mqtt;
+namespace OpenHardwareMonitor.Pub;
 
 internal class Program
 {

@@ -1,4 +1,4 @@
-﻿namespace OpenHardwareMonitor.Mqtt;
+﻿namespace OpenHardwareMonitor.Pub;
 
 [Flags]
 public enum Component
