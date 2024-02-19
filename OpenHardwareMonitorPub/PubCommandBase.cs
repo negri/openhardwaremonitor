@@ -1,4 +1,5 @@
 ﻿using System.Diagnostics;
+using System.Text.RegularExpressions;
 using CliFx;
 using CliFx.Attributes;
 using CliFx.Exceptions;
@@ -30,15 +31,40 @@ public abstract class PubCommandBase : ICommand
     [CommandOption(nameof(PoolingInterval), Description = "Pooling interval in seconds.")]
     public int PoolingInterval { get; set; } = 5;
 
+    [CommandOption(nameof(IdFilters), Description = "Only IDs that match any of these filters will be published.")]
+    public string[] IdFilters { get; set; } = Array.Empty<string>();
+
+    [CommandOption(nameof(LoadMultiplier), Description = "Multiply the raw load by this value before publishing.")]
+    public double LoadMultiplier { get; set; } = 0.01;
+
+    [CommandOption(nameof(TemperatureMinVariation), Description = "Only publish temperatures if the variation between previous and current read exceeds this value.")]
+    public double TemperatureMinVariation { get; set; } = 1.0;
+
+    [CommandOption(nameof(PowerMinVariation), Description = "Only publish power if the variation between previous and current read exceeds this value.")]
+    public double PowerMinVariation { get; set; } = 0.1;
+
+    [CommandOption(nameof(LoadMinVariation), Description = "Only publish load if the variation between previous and current read exceeds this value.")]
+    public double LoadMinVariation { get; set; } = 0.01;
+
+    // Compiled regexes of the sensor id filters
+    private readonly List<Regex> _idFilters = new();
+
+    // The Ids of the ignored sensors (so we don't keep doing regex on every pooling)
+    private readonly HashSet<string> _ignoredSensors = new();
+
+    // The last published values
+    private readonly Dictionary<string, SensorData> _lastReading = new();
+
     public async ValueTask ExecuteAsync(IConsole console)
     {
         DoParametersValidation();
 
         var verboseOutput = Verbose ? console.Output : null;
 
+        Computer? computer = null;
         try
         {
-            var computer = new Computer
+            computer = new Computer
             {
                 CPUEnabled = Components.Contains(Component.Cpu),
                 FanControllerEnabled = Components.Contains(Component.Fan),
@@ -53,15 +79,7 @@ public abstract class PubCommandBase : ICommand
 
             var visitor = new SensorVisitor(sensor =>
             {
-                if (!SensorTypes.Contains(sensor.SensorType))
-                {
-                    return;
-                }
-
-                verboseOutput?.WriteLine($"S {sensor.SensorType}: {sensor.Identifier}: {sensor.Name} = {sensor.Value}");
-
-                HandleSensor(sensor, verboseOutput);
-                
+                FilterAndPublishSensor(sensor, verboseOutput);
             });
 
             var cancellation = console.RegisterCancellationHandler();
@@ -99,7 +117,6 @@ public abstract class PubCommandBase : ICommand
 
             } while (keepPooling);
 
-            computer.Close();
         }
         catch (CommandException)
         {
@@ -114,14 +131,91 @@ public abstract class PubCommandBase : ICommand
         {
             throw new CommandException("Unknown exception!", 999, false, ex);
         }
+        finally
+        {
+            computer?.Close();
+        }
 
         return;
+    }
+
+    private void FilterAndPublishSensor(ISensor sensor, ConsoleWriter? verboseOutput)
+    {
+        if (_ignoredSensors.Contains(sensor.Identifier.ToString()))
+        {
+            return;
+        }
+
+        if (!SensorTypes.Contains(sensor.SensorType))
+        {
+            _ignoredSensors.Add(sensor.Identifier.ToString());
+            verboseOutput?.WriteLine($"  Sensor '{sensor.Identifier}' ({sensor.SensorType}, {sensor.Name}) is not a type of interest and will be ignored.");
+            return;
+        }
+
+        if (_idFilters.Any())
+        {
+            var publish = _idFilters.Any(f => f.IsMatch(sensor.Identifier.ToString()));
+            if (!publish)
+            {
+                _ignoredSensors.Add(sensor.Identifier.ToString());
+                verboseOutput?.WriteLine($"  Sensor '{sensor.Identifier}' ({sensor.SensorType}, {sensor.Name}) doesn't match any of the filters and will be ignored.");
+                return;
+            }
+        }
+
+        if (sensor.Value == null)
+        {
+            verboseOutput?.WriteLine($"  Sensor '{sensor.Identifier}' ({sensor.SensorType}, {sensor.Name}) have no value. The program has permissions to read?");
+            return;
+        }
+
+        var multiplier = 1.0;
+        if (sensor.SensorType == SensorType.Load)
+        {
+            multiplier = LoadMultiplier;
+        }
+
+        var data = new SensorData
+        {
+            Id = sensor.Identifier.ToString(),
+            SensorType = sensor.SensorType,
+            Name = sensor.Name,
+            Machine = Environment.MachineName,
+            Moment = DateTime.UtcNow,
+            Value = sensor.Value.Value * multiplier
+        };
+
+        if (_lastReading.TryGetValue(data.Id, out var previousData))
+        {
+            var ignore = false;
+            var delta = Math.Abs(data.Value - previousData.Value);
+            ignore = data.SensorType switch
+            {
+                SensorType.Load => delta <= LoadMinVariation,
+                SensorType.Power => delta <= PowerMinVariation,
+                SensorType.Temperature => delta <= TemperatureMinVariation,
+                _ => ignore
+            };
+
+            if (ignore)
+            {
+                verboseOutput?.WriteLine($"  I {data.SensorType}: {data.Id}: {data.Name} = {data.Value} (Not enough variation)");
+                return;
+            }
+        }
+
+        _lastReading[data.Id] = data;
+
+        verboseOutput?.WriteLine($"  P {data.SensorType}: {data.Id}: {data.Name} = {data.Value}");
+        
+        PublishData(data, verboseOutput);
     }
 
     /// <summary>
     /// Handles a sensor reading
     /// </summary>
-    protected abstract void HandleSensor(ISensor sensor, ConsoleWriter? verboseOutput);
+    protected abstract void PublishData(SensorData sensorData, ConsoleWriter? verboseOutput);
 
     protected virtual void DoParametersValidation()
     {
@@ -134,7 +228,7 @@ public abstract class PubCommandBase : ICommand
         {
             throw new CommandException("At least one component must be pooled.", 2);
         }
-       
+
         if (DoAdminCheck)
         {
             if (!IsUserAdministrator())
@@ -142,6 +236,29 @@ public abstract class PubCommandBase : ICommand
                 throw new CommandException("This command requires administrative privileges to execute.", 1);
             }
         }
+
+        if (IdFilters is { Length: > 0 })
+        {
+            foreach (var filter in IdFilters)
+            {
+                // Each filter must be a valid Regex
+                try
+                {
+                    var regex = new Regex(filter, RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.CultureInvariant | RegexOptions.Compiled, TimeSpan.FromMilliseconds(500));
+                    _idFilters.Add(regex);
+                }
+                catch (Exception ex)
+                {
+                    throw new CommandException($"The expression '{filter}' is not a valid regex expression.", 2, false, ex);
+                }
+            }
+        }
+
+        if (LoadMultiplier <= 0.0)
+        {
+            throw new CommandException($"The load multiplier must be greater than zero.", 2);
+        }
+
     }
 
     private static bool IsUserAdministrator()

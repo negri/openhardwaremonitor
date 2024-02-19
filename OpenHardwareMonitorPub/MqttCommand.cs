@@ -5,6 +5,9 @@ using OpenHardwareMonitor.Hardware;
 
 namespace OpenHardwareMonitor.Pub;
 
+/// <summary>
+/// Publish sensor readings to a MQTT broker
+/// </summary>
 [Command("mqtt", Description = "Monitors this machine hardware and publish values to a MQTT broker.")]
 public class MqttCommand : PubCommandBase
 {
@@ -21,6 +24,11 @@ public class MqttCommand : PubCommandBase
     [CommandOption(nameof(ValidateTlsCert), Description = "If TLS certificates should be validated.")]
     public bool ValidateTlsCert { get; set; } = true;
 
+    protected override void PublishData(SensorData sensorData, ConsoleWriter? verboseOutput)
+    {
+        
+    }
+
     protected override void DoParametersValidation()
     {
         base.DoParametersValidation();
@@ -32,8 +40,5 @@ public class MqttCommand : PubCommandBase
 
     }
 
-    protected override void HandleSensor(ISensor sensor, ConsoleWriter? verboseOutput)
-    {
-        //throw new NotImplementedException();
-    }
+    
 }
