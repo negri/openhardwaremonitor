@@ -149,7 +149,7 @@ public abstract class PubCommandBase : ICommand
         if (!SensorTypes.Contains(sensor.SensorType))
         {
             _ignoredSensors.Add(sensor.Identifier.ToString());
-            verboseOutput?.WriteLine($"  Sensor '{sensor.Identifier}' ({sensor.SensorType}, {sensor.Name}) is not a type of interest and will be ignored.");
+            verboseOutput?.WriteLine($"  I Sensor '{sensor.Identifier}' ({sensor.SensorType}, {sensor.Name}) is not a type of interest and will be ignored.");
             return;
         }
 
@@ -159,14 +159,14 @@ public abstract class PubCommandBase : ICommand
             if (!publish)
             {
                 _ignoredSensors.Add(sensor.Identifier.ToString());
-                verboseOutput?.WriteLine($"  Sensor '{sensor.Identifier}' ({sensor.SensorType}, {sensor.Name}) doesn't match any of the filters and will be ignored.");
+                verboseOutput?.WriteLine($"  I Sensor '{sensor.Identifier}' ({sensor.SensorType}, {sensor.Name}) doesn't match any of the filters and will be ignored.");
                 return;
             }
         }
 
         if (sensor.Value == null)
         {
-            verboseOutput?.WriteLine($"  Sensor '{sensor.Identifier}' ({sensor.SensorType}, {sensor.Name}) have no value. The program has permissions to read?");
+            verboseOutput?.WriteLine($"  I Sensor '{sensor.Identifier}' ({sensor.SensorType}, {sensor.Name}) have no value. The program has permissions to read?");
             return;
         }
 
