@@ -10,6 +10,7 @@
 
   <ItemGroup>
     <PackageReference Include="CliFx" Version="2.3.5" />
+    <PackageReference Include="MQTTnet" Version="4.3.3.952" />
   </ItemGroup>
 
   <ItemGroup>

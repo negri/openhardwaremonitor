@@ -35,7 +35,7 @@ public abstract class PubCommandBase : ICommand
     public string[] IdFilters { get; set; } = Array.Empty<string>();
 
     [CommandOption(nameof(LoadMultiplier), Description = "Multiply the raw load by this value before publishing.")]
-    public double LoadMultiplier { get; set; } = 0.01;
+    public double LoadMultiplier { get; set; } = 1.0;
 
     [CommandOption(nameof(TemperatureMinVariation), Description = "Only publish temperatures if the variation between previous and current read exceeds this value.")]
     public double TemperatureMinVariation { get; set; } = 1.0;
@@ -44,7 +44,7 @@ public abstract class PubCommandBase : ICommand
     public double PowerMinVariation { get; set; } = 0.1;
 
     [CommandOption(nameof(LoadMinVariation), Description = "Only publish load if the variation between previous and current read exceeds this value.")]
-    public double LoadMinVariation { get; set; } = 0.01;
+    public double LoadMinVariation { get; set; } = 2.5;
 
     // Compiled regexes of the sensor id filters
     private readonly List<Regex> _idFilters = new();
@@ -57,13 +57,14 @@ public abstract class PubCommandBase : ICommand
 
     public async ValueTask ExecuteAsync(IConsole console)
     {
-        DoParametersValidation();
-
         var verboseOutput = Verbose ? console.Output : null;
+        var cancellation = console.RegisterCancellationHandler();
 
         Computer? computer = null;
         try
         {
+            DoParametersValidation(cancellation, verboseOutput);
+
             computer = new Computer
             {
                 CPUEnabled = Components.Contains(Component.Cpu),
@@ -79,10 +80,8 @@ public abstract class PubCommandBase : ICommand
 
             var visitor = new SensorVisitor(sensor =>
             {
-                FilterAndPublishSensor(sensor, verboseOutput);
+                FilterAndPublishSensor(sensor, cancellation, verboseOutput);
             });
-
-            var cancellation = console.RegisterCancellationHandler();
 
             var keepPooling = Pooling;
             if (Verbose && Pooling)
@@ -129,6 +128,7 @@ public abstract class PubCommandBase : ICommand
         }
         catch (Exception ex)
         {
+            console.Error.WriteLine(ex);
             throw new CommandException("Unknown exception!", 999, false, ex);
         }
         finally
@@ -139,7 +139,7 @@ public abstract class PubCommandBase : ICommand
         return;
     }
 
-    private void FilterAndPublishSensor(ISensor sensor, ConsoleWriter? verboseOutput)
+    private void FilterAndPublishSensor(ISensor sensor, CancellationToken cancellation, ConsoleWriter? verboseOutput)
     {
         if (_ignoredSensors.Contains(sensor.Identifier.ToString()))
         {
@@ -208,16 +208,16 @@ public abstract class PubCommandBase : ICommand
         _lastReading[data.Id] = data;
 
         verboseOutput?.WriteLine($"  P {data.SensorType}: {data.Id}: {data.Name} = {data.Value}");
-        
-        PublishData(data, verboseOutput);
+
+        PublishData(data, cancellation, verboseOutput);
     }
 
     /// <summary>
     /// Handles a sensor reading
     /// </summary>
-    protected abstract void PublishData(SensorData sensorData, ConsoleWriter? verboseOutput);
+    protected abstract void PublishData(SensorData sensorData, CancellationToken cancellation, ConsoleWriter? verboseOutput);
 
-    protected virtual void DoParametersValidation()
+    protected virtual void DoParametersValidation(CancellationToken cancellation, ConsoleWriter? verboseOutput)
     {
         if (SensorTypes.Count <= 0)
         {

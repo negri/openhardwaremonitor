@@ -28,7 +28,7 @@ public class FilesCommand : PubCommandBase
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,        
     };
 
-    protected override void PublishData(SensorData sensorData, ConsoleWriter? verboseOutput)
+    protected override void PublishData(SensorData sensorData, CancellationToken cancellation, ConsoleWriter? verboseOutput)
     {        
         var fileName = Path.Combine(Directory, $"{sensorData.Machine}-{sensorData.Id.Trim(' ', '-', '/', '\\').Replace('/', '-')}.txt");
 
@@ -44,9 +44,9 @@ public class FilesCommand : PubCommandBase
         File.AppendAllText(fileName, dataAsJson);
     }
 
-    protected override void DoParametersValidation()
+    protected override void DoParametersValidation(CancellationToken cancellation, ConsoleWriter? verboseOutput)
     {
-        base.DoParametersValidation();
+        base.DoParametersValidation(cancellation, verboseOutput);
 
         if (string.IsNullOrEmpty(Directory))
         {
