@@ -38,6 +38,11 @@ public class MqttCommand : PubCommandBase
             throw new CommandException("The MQTT broker must be supplied.", 2);
         }
 
+        if (Port <= 0)
+        {
+            throw new CommandException("The MQTT broker post must be greater than zero.", 2);
+        }
+
     }
 
     
