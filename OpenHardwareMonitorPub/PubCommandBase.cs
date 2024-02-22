@@ -63,7 +63,7 @@ public abstract class PubCommandBase : ICommand
         Computer? computer = null;
         try
         {
-            DoParametersValidation(cancellation, verboseOutput);
+            DoParametersValidation(console, cancellation, verboseOutput);
 
             computer = new Computer
             {
@@ -217,7 +217,7 @@ public abstract class PubCommandBase : ICommand
     /// </summary>
     protected abstract void PublishData(SensorData sensorData, CancellationToken cancellation, ConsoleWriter? verboseOutput);
 
-    protected virtual void DoParametersValidation(CancellationToken cancellation, ConsoleWriter? verboseOutput)
+    protected virtual void DoParametersValidation(IConsole console, CancellationToken cancellation, ConsoleWriter? verboseOutput)
     {
         if (SensorTypes.Count <= 0)
         {

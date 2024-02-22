@@ -1,4 +1,5 @@
 ﻿using OpenHardwareMonitor.Hardware;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace OpenHardwareMonitor.Pub;
@@ -8,6 +9,11 @@ namespace OpenHardwareMonitor.Pub;
 /// </summary>
 public record SensorData
 {
+    private static readonly JsonSerializerOptions SerializerOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+    };
+
     /// <summary>
     /// The sensor Id
     /// </summary>
@@ -38,5 +44,27 @@ public record SensorData
     /// The Sensor Value
     /// </summary>
     public double Value { get; init; }
+
+    /// <summary>
+    /// The MQTT Topic to be used
+    /// </summary>
+    public string Topic
+    {
+        get
+        {
+            var type = SensorType.ToString().ToLowerInvariant();
+            var id = Id.Trim('/').ToLowerInvariant().Replace(type, string.Empty).Replace("//", "/");
+            var topic = $"{Machine.ToLowerInvariant()}/ohm/{id}/{type}";
+            return topic;
+        }
+    }
+
+    /// <summary>
+    /// A json string representing this sensor data
+    /// </summary>
+    public string ToJson()
+    {
+        return JsonSerializer.Serialize(this, SerializerOptions);
+    }
     
 }

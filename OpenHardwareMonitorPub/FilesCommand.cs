@@ -22,12 +22,7 @@ public class FilesCommand : PubCommandBase
 
     [CommandOption(nameof(MaxFileSizeKb), Description = "Maximum size of the data files in kb. Will be reinitialized when it exceeds this size")]
     public int MaxFileSizeKb { get; set; } = 10;
-
-    private readonly JsonSerializerOptions _serializeOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,        
-    };
-
+   
     protected override void PublishData(SensorData sensorData, CancellationToken cancellation, ConsoleWriter? verboseOutput)
     {        
         var fileName = Path.Combine(Directory, $"{sensorData.Machine}-{sensorData.Id.Trim(' ', '-', '/', '\\').Replace('/', '-')}.txt");
@@ -39,14 +34,14 @@ public class FilesCommand : PubCommandBase
             File.Delete(fileName);
         }
         
-        var dataAsJson = $"{JsonSerializer.Serialize(sensorData, _serializeOptions)}\n";
+        var dataAsJson = $"{sensorData.ToJson()}\n";
 
         File.AppendAllText(fileName, dataAsJson);
     }
 
-    protected override void DoParametersValidation(CancellationToken cancellation, ConsoleWriter? verboseOutput)
+    protected override void DoParametersValidation(IConsole console, CancellationToken cancellation, ConsoleWriter? verboseOutput)
     {
-        base.DoParametersValidation(cancellation, verboseOutput);
+        base.DoParametersValidation(console, cancellation, verboseOutput);
 
         if (string.IsNullOrEmpty(Directory))
         {

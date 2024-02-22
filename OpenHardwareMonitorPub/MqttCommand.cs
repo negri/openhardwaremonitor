@@ -45,35 +45,29 @@ public class MqttCommand : PubCommandBase
     public bool WithoutPacketFragmentation { get; set; } = false;
 
     [CommandOption(nameof(DoPing), Description = "Do an initial ping. Only if protocol >= 5.0")]
-    public bool DoPing { get; set; } = false;
-
-    private readonly JsonSerializerOptions _serializeOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-    };
-
+    public bool DoPing { get; set; } = true;
+    
     // The MQTT Client
     private IMqttClient? _mqttClient;
-
 
     protected override void PublishData(SensorData sensorData, CancellationToken cancellation, ConsoleWriter? verboseOutput)
     {
         Debug.Assert(_mqttClient != null);
         Debug.Assert(sensorData != null);
 
-        var topic = GetTopic(sensorData);
-        var dataAsJson = $"{JsonSerializer.Serialize(sensorData, _serializeOptions)}\n";
+        var topic = sensorData.Topic;
+        var dataAsJson = sensorData.ToJson();
 
         var applicationMessage = new MqttApplicationMessageBuilder()
                 .WithTopic(topic)
                 .WithPayload(dataAsJson)
                 .Build();
 
-        // If disconected wait a little for the reconection event
+        // If disconnected wait a little for the reconnection event
         while (!_mqttClient.IsConnected && !cancellation.IsCancellationRequested)
         {
-            verboseOutput?.WriteLine("    waitinf for reconection...");
-            Task.Delay(1000).Wait(cancellation);
+            verboseOutput?.WriteLine("    waiting for reconnection...");
+            Task.Delay(1000, cancellation).Wait(cancellation);
         }
         if (cancellation.IsCancellationRequested)
         {
@@ -84,41 +78,22 @@ public class MqttCommand : PubCommandBase
 
         if (result.IsSuccess)
         {
-            if (ProtocolVersion >= MQTTnet.Formatter.MqttProtocolVersion.V500)
-            {
-                verboseOutput?.WriteLine($"    published Ok at {topic} with reason {result.ReasonCode}.");
-            }
-            else
-            {
-                verboseOutput?.WriteLine($"    published Ok at {topic}.");
-            }
+            verboseOutput?.WriteLine(ProtocolVersion >= MQTTnet.Formatter.MqttProtocolVersion.V500
+                ? $"    published Ok at {topic} with reason {result.ReasonCode}."
+                : $"    published Ok at {topic}.");
         }
         else
         {
-            if (ProtocolVersion >= MQTTnet.Formatter.MqttProtocolVersion.V500)
-            {
-                verboseOutput?.WriteLine($"    error publishing at {topic} with reason {result.ReasonCode}!");
-            }
-            else
-            {
-                verboseOutput?.WriteLine($"    error publishing at {topic}!");
-            }
+            verboseOutput?.WriteLine(ProtocolVersion >= MQTTnet.Formatter.MqttProtocolVersion.V500
+                ? $"    error publishing at {topic} with reason {result.ReasonCode}!"
+                : $"    error publishing at {topic}!");
         }
 
     }
-
-    // Assembles a beatiful topic
-    private static string GetTopic(SensorData sensorData)
+   
+    protected override void DoParametersValidation(IConsole console, CancellationToken cancellation, ConsoleWriter? verboseOutput)
     {
-        var type = sensorData.SensorType.ToString().ToLowerInvariant();
-        var id = sensorData.Id.Trim('/').ToLowerInvariant().Replace(type, string.Empty).Replace("//", "/");
-        var topic = $"{sensorData.Machine.ToLowerInvariant()}/ohmp/{id}/{type}";
-        return topic;
-    }
-
-    protected override void DoParametersValidation(CancellationToken cancellation, ConsoleWriter? verboseOutput)
-    {
-        base.DoParametersValidation(cancellation, verboseOutput);
+        base.DoParametersValidation(console, cancellation, verboseOutput);
 
         if (string.IsNullOrEmpty(Broker))
         {
@@ -136,14 +111,9 @@ public class MqttCommand : PubCommandBase
         // Build the options
         var optionsBuilder = factory.CreateClientOptionsBuilder();
 
-        if (IsWebSocket)
-        {
-            optionsBuilder = optionsBuilder.WithWebSocketServer(o => o.WithUri(Broker));
-        }
-        else
-        {
-            optionsBuilder = optionsBuilder.WithTcpServer(Broker, Port);
-        }
+        optionsBuilder = IsWebSocket
+            ? optionsBuilder.WithWebSocketServer(o => o.WithUri(Broker))
+            : optionsBuilder.WithTcpServer(Broker, Port);
 
         if (WithoutPacketFragmentation)
         {
@@ -166,12 +136,12 @@ public class MqttCommand : PubCommandBase
 
         var options = optionsBuilder.Build();
 
-        // Handles Disconects
+        // Handles Disconnects
         client.DisconnectedAsync += async e =>
         {
             if (e.ClientWasConnected)
             {
-                verboseOutput?.WriteLine("Disconected. Retrying...");
+                verboseOutput?.WriteLine("Disconnected. Retrying...");
                 await client.ConnectAsync(client.Options, cancellation);
                 verboseOutput?.WriteLine("Connected again");
             }
@@ -187,13 +157,13 @@ public class MqttCommand : PubCommandBase
 
         // Let's do it!
         verboseOutput?.WriteLine($"Connecting to {Broker}...");
-        var response = client.ConnectAsync(options, cancellation).Result;
+        _ = client.ConnectAsync(options, cancellation).Result;
         verboseOutput?.WriteLine($"Connected!");
 
         if (DoPing && ProtocolVersion >= MQTTnet.Formatter.MqttProtocolVersion.V500)
         {
-            client.PingAsync(cancellation).Wait();
-            verboseOutput?.WriteLine($"Server replied the initial ping.");
+            client.PingAsync(cancellation).Wait(cancellation);
+            verboseOutput?.WriteLine("Server replied the initial ping.");
         }
 
         // All done, this client will be used for this instance live
