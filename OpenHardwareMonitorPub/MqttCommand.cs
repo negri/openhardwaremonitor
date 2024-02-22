@@ -1,4 +1,5 @@
-﻿using CliFx.Attributes;
+﻿using System.Collections.Concurrent;
+using CliFx.Attributes;
 using CliFx.Exceptions;
 using CliFx.Infrastructure;
 using MQTTnet;
@@ -46,10 +47,18 @@ public class MqttCommand : PubCommandBase
 
     [CommandOption(nameof(DoPing), Description = "Do an initial ping. Only if protocol >= 5.0")]
     public bool DoPing { get; set; } = true;
+
+    [CommandOption(nameof(HomeAssistant), 'a', Description = "Enables Home Assistant integration messages")]
+    public bool HomeAssistant { get; set; } = false;
+
+    [CommandOption(nameof(HomeAssistantDiscoveryPrefix), Description = "The topic prefix Home Assistant uses for automatic configuration")]
+    public string HomeAssistantDiscoveryPrefix { get; set; } = "homeassistant";
     
     // The MQTT Client
     private IMqttClient? _mqttClient;
 
+    
+    
     protected override void PublishData(SensorData sensorData, CancellationToken cancellation, ConsoleWriter? verboseOutput)
     {
         Debug.Assert(_mqttClient != null);
@@ -90,21 +99,9 @@ public class MqttCommand : PubCommandBase
         }
 
     }
-   
-    protected override void DoParametersValidation(IConsole console, CancellationToken cancellation, ConsoleWriter? verboseOutput)
+
+    protected override void PrepareForReadingData(IConsole console, CancellationToken cancellation, ConsoleWriter? verboseOutput)
     {
-        base.DoParametersValidation(console, cancellation, verboseOutput);
-
-        if (string.IsNullOrEmpty(Broker))
-        {
-            throw new CommandException("The MQTT broker must be supplied.", 2);
-        }
-
-        if (Port <= 0)
-        {
-            throw new CommandException("The MQTT broker post must be greater than zero.", 2);
-        }
-
         var factory = new MqttFactory();
         var client = factory.CreateMqttClient();
 
@@ -158,7 +155,7 @@ public class MqttCommand : PubCommandBase
         // Let's do it!
         verboseOutput?.WriteLine($"Connecting to {Broker}...");
         _ = client.ConnectAsync(options, cancellation).Result;
-        verboseOutput?.WriteLine($"Connected!");
+        verboseOutput?.WriteLine("Connected!");
 
         if (DoPing && ProtocolVersion >= MQTTnet.Formatter.MqttProtocolVersion.V500)
         {
@@ -168,6 +165,26 @@ public class MqttCommand : PubCommandBase
 
         // All done, this client will be used for this instance live
         _mqttClient = client;
+    }
+
+    protected override void PostReadingDataLoop(IConsole console, CancellationToken cancellation, ConsoleWriter? verboseOutput)
+    {
+    }
+
+    protected override void ValidateParameters(CancellationToken cancellation, ConsoleWriter? verboseOutput)
+    {
+        base.ValidateParameters(cancellation, verboseOutput);
+
+        if (string.IsNullOrEmpty(Broker))
+        {
+            throw new CommandException("The MQTT broker must be supplied.", 2);
+        }
+
+        if (Port <= 0)
+        {
+            throw new CommandException("The MQTT broker post must be greater than zero.", 2);
+        }
+
     }
 
 

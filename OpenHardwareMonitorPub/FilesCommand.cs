@@ -39,15 +39,8 @@ public class FilesCommand : PubCommandBase
         File.AppendAllText(fileName, dataAsJson);
     }
 
-    protected override void DoParametersValidation(IConsole console, CancellationToken cancellation, ConsoleWriter? verboseOutput)
+    protected override void PrepareForReadingData(IConsole console, CancellationToken cancellation, ConsoleWriter? verboseOutput)
     {
-        base.DoParametersValidation(console, cancellation, verboseOutput);
-
-        if (string.IsNullOrEmpty(Directory))
-        {
-            throw new CommandException("The directory must be supplied.", 2);
-        }
-
         if (System.IO.Directory.Exists(Directory))
         {
             return;
@@ -61,7 +54,20 @@ public class FilesCommand : PubCommandBase
         {
             throw new CommandException($"The directory '{Directory}' must exists.", 2);
         }
+    }
 
+    protected override void PostReadingDataLoop(IConsole console, CancellationToken cancellation, ConsoleWriter? verboseOutput)
+    {
+    }
+
+    protected override void ValidateParameters(CancellationToken cancellation, ConsoleWriter? verboseOutput)
+    {
+        base.ValidateParameters(cancellation, verboseOutput);
+
+        if (string.IsNullOrEmpty(Directory))
+        {
+            throw new CommandException("The directory must be supplied.", 2);
+        }
 
     }
 

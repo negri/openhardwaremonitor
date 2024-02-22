@@ -46,6 +46,9 @@ public abstract class PubCommandBase : ICommand
     [CommandOption(nameof(LoadMinVariation), Description = "Only publish load if the variation between previous and current read exceeds this value.")]
     public double LoadMinVariation { get; set; } = 2.5;
 
+    [CommandOption(nameof(MinPublishInterval), Description = "Minimum time to publish a reading, even if there was no variation, in seconds.")]
+    public int MinPublishInterval {get; set; } = 120;
+
     // Compiled regexes of the sensor id filters
     private readonly List<Regex> _idFilters = new();
 
@@ -63,8 +66,10 @@ public abstract class PubCommandBase : ICommand
         Computer? computer = null;
         try
         {
-            DoParametersValidation(console, cancellation, verboseOutput);
+            ValidateParameters(cancellation, verboseOutput);
 
+            PrepareForReadingData(console, cancellation, verboseOutput);
+            
             computer = new Computer
             {
                 CPUEnabled = Components.Contains(Component.Cpu),
@@ -134,6 +139,7 @@ public abstract class PubCommandBase : ICommand
         finally
         {
             computer?.Close();
+            PostReadingDataLoop(console, cancellation, verboseOutput);
         }
 
         return;
@@ -200,6 +206,17 @@ public abstract class PubCommandBase : ICommand
 
             if (ignore)
             {
+                // Maybe it should not be ignored based on the time of the last publishing...
+                var timeFromLastPublishing = data.Moment - previousData.Moment;
+                if (timeFromLastPublishing.TotalSeconds > MinPublishInterval)
+                {
+                    // ... don't ignore this reading
+                    ignore = false;
+                }
+            }
+            
+            if (ignore)
+            {
                 verboseOutput?.WriteLine($"  I {data.SensorType}: {data.Id}: {data.Name} = {data.Value} (Not enough variation)");
                 return;
             }
@@ -217,7 +234,24 @@ public abstract class PubCommandBase : ICommand
     /// </summary>
     protected abstract void PublishData(SensorData sensorData, CancellationToken cancellation, ConsoleWriter? verboseOutput);
 
-    protected virtual void DoParametersValidation(IConsole console, CancellationToken cancellation, ConsoleWriter? verboseOutput)
+    /// <summary>
+    /// Before sensor data starts being read tasks
+    /// </summary>
+    /// <remarks>
+    /// A chance on derived commands to prepare connections, directories etc
+    /// </remarks>
+    protected abstract void PrepareForReadingData(IConsole console, CancellationToken cancellation, ConsoleWriter? verboseOutput);
+
+
+    /// <summary>
+    /// After the data reading loop
+    /// </summary>
+    /// <remarks>
+    /// A chance on derived commands do clean-up. It may be called after an exception! Take care of the possible bad state thinks are!
+    /// </remarks>
+    protected abstract void PostReadingDataLoop(IConsole console, CancellationToken cancellation, ConsoleWriter? verboseOutput);
+
+    protected virtual void ValidateParameters(CancellationToken cancellation, ConsoleWriter? verboseOutput)
     {
         if (SensorTypes.Count <= 0)
         {
@@ -257,6 +291,35 @@ public abstract class PubCommandBase : ICommand
         if (LoadMultiplier <= 0.0)
         {
             throw new CommandException($"The load multiplier must be greater than zero.", 2);
+        }
+
+        if (Pooling)
+        {
+            if (PoolingInterval < 1)
+            {
+                throw new CommandException("The pooling interval must be at least 1s.", 2);
+            }
+
+            if (MinPublishInterval <= PoolingInterval)
+            {
+                throw new CommandException("The minimum publishing interval must be greather than the pooling interval.", 2);
+            }
+
+            if (LoadMinVariation < 0.0)
+            {
+                throw new CommandException("The minimum load variation must a positive number.", 2);
+            }
+
+            if (PowerMinVariation < 0.0)
+            {
+                throw new CommandException("The minimum power variation must a positive number.", 2);
+            }
+
+            if (TemperatureMinVariation < 0.0)
+            {
+                throw new CommandException("The minimum temperature variation must a positive number.", 2);
+            }
+            
         }
 
     }

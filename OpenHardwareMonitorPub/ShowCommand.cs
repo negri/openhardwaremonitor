@@ -27,11 +27,12 @@ public class ShowCommand : PubCommandBase
         _console.Output.WriteLine();
     }
 
-    protected override void DoParametersValidation(IConsole console, CancellationToken cancellation, ConsoleWriter? verboseOutput)
+    protected override void PrepareForReadingData(IConsole console, CancellationToken cancellation, ConsoleWriter? verboseOutput)
     {
-        base.DoParametersValidation(console, cancellation, verboseOutput);
         _console = console;
     }
 
-   
+    protected override void PostReadingDataLoop(IConsole console, CancellationToken cancellation, ConsoleWriter? verboseOutput)
+    {
+    }
 }
