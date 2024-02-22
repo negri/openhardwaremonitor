@@ -32,7 +32,7 @@ public class ShowCommand : PubCommandBase
         _console = console;
     }
 
-    protected override void PostReadingDataLoop(IConsole console, CancellationToken cancellation, ConsoleWriter? verboseOutput)
+    protected override void PostReadingDataLoop(IConsole console, ConsoleWriter? verboseOutput)
     {
     }
 }

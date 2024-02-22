@@ -58,6 +58,9 @@ public abstract class PubCommandBase : ICommand
     // The last published values
     private readonly Dictionary<string, SensorData> _lastReading = new();
 
+    // If true a derived class has requested that the loop quits
+    protected bool QuitPooling { get; set; } = false;
+
     public async ValueTask ExecuteAsync(IConsole console)
     {
         var verboseOutput = Verbose ? console.Output : null;
@@ -66,7 +69,7 @@ public abstract class PubCommandBase : ICommand
         Computer? computer = null;
         try
         {
-            ValidateParameters(cancellation, verboseOutput);
+            ValidateParameters();
 
             PrepareForReadingData(console, cancellation, verboseOutput);
             
@@ -119,6 +122,11 @@ public abstract class PubCommandBase : ICommand
                     verboseOutput?.WriteLine();
                 }
 
+                if (QuitPooling)
+                {
+                    keepPooling = false;
+                }
+
             } while (keepPooling);
 
         }
@@ -139,7 +147,7 @@ public abstract class PubCommandBase : ICommand
         finally
         {
             computer?.Close();
-            PostReadingDataLoop(console, cancellation, verboseOutput);
+            PostReadingDataLoop(console, verboseOutput);
         }
 
         return;
@@ -249,9 +257,9 @@ public abstract class PubCommandBase : ICommand
     /// <remarks>
     /// A chance on derived commands do clean-up. It may be called after an exception! Take care of the possible bad state thinks are!
     /// </remarks>
-    protected abstract void PostReadingDataLoop(IConsole console, CancellationToken cancellation, ConsoleWriter? verboseOutput);
+    protected abstract void PostReadingDataLoop(IConsole console, ConsoleWriter? verboseOutput);
 
-    protected virtual void ValidateParameters(CancellationToken cancellation, ConsoleWriter? verboseOutput)
+    protected virtual void ValidateParameters()
     {
         if (SensorTypes.Count <= 0)
         {

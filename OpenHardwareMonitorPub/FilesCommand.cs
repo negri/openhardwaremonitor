@@ -1,7 +1,6 @@
 ﻿using CliFx.Attributes;
 using CliFx.Exceptions;
 using CliFx.Infrastructure;
-using System.Text.Json;
 
 namespace OpenHardwareMonitor.Pub;
 
@@ -56,13 +55,13 @@ public class FilesCommand : PubCommandBase
         }
     }
 
-    protected override void PostReadingDataLoop(IConsole console, CancellationToken cancellation, ConsoleWriter? verboseOutput)
+    protected override void PostReadingDataLoop(IConsole console, ConsoleWriter? verboseOutput)
     {
     }
 
-    protected override void ValidateParameters(CancellationToken cancellation, ConsoleWriter? verboseOutput)
+    protected override void ValidateParameters()
     {
-        base.ValidateParameters(cancellation, verboseOutput);
+        base.ValidateParameters();
 
         if (string.IsNullOrEmpty(Directory))
         {

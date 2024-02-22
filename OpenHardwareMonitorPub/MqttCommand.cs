@@ -10,6 +10,9 @@ using System.Globalization;
 using System.Text.Json;
 using OpenHardwareMonitor.Hardware;
 using System.Xml;
+using MQTTnet.Protocol;
+using System.Text;
+using MQTTnet.Internal;
 
 namespace OpenHardwareMonitor.Pub;
 
@@ -56,6 +59,13 @@ public class MqttCommand : PubCommandBase
     [CommandOption(nameof(HomeAssistantDiscoveryPrefix), Description = "The topic prefix Home Assistant uses for automatic configuration")]
     public string HomeAssistantDiscoveryPrefix { get; set; } = "homeassistant";
 
+    [CommandOption(nameof(QuitWithHomeAssistant), Description = "Quits if Home Assistant stops listening.")]
+    public bool QuitWithHomeAssistant { get; set; } = true;
+
+    private const string HOME_ASSISTANT_STATUS_TOPIC = "homeassistant/status";
+    private const string HOME_ASSISTANT_STATUS_ONLINE = "online";
+    private const string HOME_ASSISTANT_STATUS_OFFLINE = "offline";
+
     // The MQTT Client
     private IMqttClient? _mqttClient;
 
@@ -77,10 +87,23 @@ public class MqttCommand : PubCommandBase
         var topic = sensorData.Topic;
         var dataAsJson = sensorData.ToJson();
 
+        SendMessage(topic, dataAsJson, verboseOutput, cancellation);
+    }
+
+    private void SendMessage(string topic, string payload, TextWriter? verboseOutput, CancellationToken cancellation, MqttQualityOfServiceLevel qosLevel = MqttQualityOfServiceLevel.AtMostOnce)
+    {
+        Debug.Assert(_mqttClient != null);
+
+        if (cancellation.IsCancellationRequested)
+        {
+            return;
+        }
+
         var applicationMessage = new MqttApplicationMessageBuilder()
-                .WithTopic(topic)
-                .WithPayload(dataAsJson)
-                .Build();
+            .WithTopic(topic)
+            .WithPayload(payload)
+            .WithQualityOfServiceLevel(qosLevel)
+            .Build();
 
         // If disconnected wait a little for the reconnection event
         while (!_mqttClient.IsConnected && !cancellation.IsCancellationRequested)
@@ -107,11 +130,7 @@ public class MqttCommand : PubCommandBase
                 ? $"    error publishing at {topic} with reason {result.ReasonCode}!"
                 : $"    error publishing at {topic}!");
         }
-
     }
-
-
-
 
     /// <summary>
     /// Handle Home Assistant sensor registration
@@ -132,7 +151,7 @@ public class MqttCommand : PubCommandBase
 
         var deviceObjectId = sensorData.Machine.ToLowerInvariant();
         const string component = "sensor";
-        var nodeId = sensorData.Id.ToLowerInvariant().Replace('/', '_');
+        var nodeId = sensorData.Id.ToLowerInvariant().Replace('/', '_').Trim('_');
 
         var deviceClass = sensorData.SensorType switch
         {
@@ -185,7 +204,13 @@ public class MqttCommand : PubCommandBase
         // Can skip some few publishing intervals and still be available 
         var expireAfter = MinPublishInterval + PoolingInterval * 4;
 
-        var uniqueId = $"{deviceObjectId}_ohm_{nodeId}_{sensorData.SensorType}".ToLowerInvariant();
+        var uniqueId = $"{deviceObjectId}_ohm_{nodeId}".ToLowerInvariant();
+
+        var name = sensorData.Name;
+        if (!name.Contains(sensorData.SensorType.ToString(), StringComparison.InvariantCultureIgnoreCase))
+        {
+            name = $"{sensorData.SensorType} {sensorData.Name}";
+        }
 
         var configurationTopic = $"{HomeAssistantDiscoveryPrefix}/{component}/{nodeId}/{deviceObjectId}/config";
 
@@ -196,7 +221,7 @@ public class MqttCommand : PubCommandBase
                 name = sensorData.Machine,
                 identifiers = new[] { $"{sensorData.Machine}.ohm".ToLowerInvariant() }
             },
-            name = sensorData.Name,
+            name,
             state_topic = sensorData.Topic,
             device_class = deviceClass,
             expire_after = expireAfter,
@@ -209,11 +234,11 @@ public class MqttCommand : PubCommandBase
 
         var configurationMessage = JsonSerializer.Serialize(configurationObject);
 
+        _registeredHomeAssistantSensors.TryAdd(sensorData.Id, DateTime.UtcNow);
 
+        SendMessage(configurationTopic, configurationMessage, verboseOutput, cancellation, MqttQualityOfServiceLevel.AtLeastOnce);
 
-
-
-
+        verboseOutput?.WriteLine($"Auto discovery message sent. The unique id is {uniqueId}.");
     }
 
     protected override void PrepareForReadingData(IConsole console, CancellationToken cancellation, ConsoleWriter? verboseOutput)
@@ -249,24 +274,9 @@ public class MqttCommand : PubCommandBase
 
         var options = optionsBuilder.Build();
 
-        // Handles Disconnects
-        client.DisconnectedAsync += async e =>
-        {
-            if (e.ClientWasConnected)
-            {
-                verboseOutput?.WriteLine("Disconnected. Retrying...");
-                await client.ConnectAsync(client.Options, cancellation);
-                verboseOutput?.WriteLine("Connected again");
-            }
-        };
+        client.DisconnectedAsync += OnClientOnDisconnectedAsync;
 
-        // Handles Messages Received
-        client.ApplicationMessageReceivedAsync += ea =>
-        {
-            verboseOutput?.WriteLine($"Received message on topic {ea.ApplicationMessage.Topic}");
-
-            return Task.CompletedTask;
-        };
+        client.ApplicationMessageReceivedAsync += OnClientOnApplicationMessageReceivedAsync;
 
         // Let's do it!
         verboseOutput?.WriteLine($"Connecting to {Broker}...");
@@ -279,17 +289,112 @@ public class MqttCommand : PubCommandBase
             verboseOutput?.WriteLine("Server replied the initial ping.");
         }
 
+        if (HomeAssistant)
+        {
+            // Subscribe to messages indicating that Home Assistant went online or offline
+
+            verboseOutput?.WriteLine("Subscribing on Home Assistant events...");
+
+            var mqttSubscribeOptions = factory.CreateSubscribeOptionsBuilder()
+                .WithTopicFilter(
+                    f =>
+                    {
+                        f.WithTopic(HOME_ASSISTANT_STATUS_TOPIC);
+                    })
+                .Build();
+
+            var subResult = client.SubscribeAsync(mqttSubscribeOptions, cancellation).Result;
+
+            verboseOutput?.WriteLine($"Subscribed on Home Assistant events with result {subResult.ReasonString}.");
+        }
+
         // All done, this client will be used for this instance live
         _mqttClient = client;
+        return;
+
+        // Handles Messages Received
+        Task OnClientOnApplicationMessageReceivedAsync(MqttApplicationMessageReceivedEventArgs ea)
+        {
+            verboseOutput?.WriteLine($"Received message on topic {ea.ApplicationMessage.Topic}");
+
+            if (!HomeAssistant)
+            {
+                return Task.CompletedTask;
+            }
+
+            if (ea.ApplicationMessage.Topic != HOME_ASSISTANT_STATUS_TOPIC)
+            {
+                return Task.CompletedTask;
+            }
+
+            var payload = ea.ApplicationMessage.ConvertPayloadToString();
+            if (payload == null)
+            {
+                console.Error.WriteLine("Home Assistant sent an empty payload?");
+            }
+            else if (payload == HOME_ASSISTANT_STATUS_ONLINE)
+            {
+                verboseOutput?.WriteLine("Home Assistant just went online. New configurations messages will be sent.");
+                _registeredHomeAssistantSensors.Clear();
+            }
+            else if (payload == HOME_ASSISTANT_STATUS_OFFLINE)
+            {
+                console.Output.WriteLine("Home Assistant just went offline.");
+                if (QuitWithHomeAssistant)
+                {
+                    QuitPooling = true;
+                    client.DisconnectedAsync -= OnClientOnDisconnectedAsync;
+                    verboseOutput?.WriteLine("Quitting pooling...");
+                }
+            }
+
+            return Task.CompletedTask;
+        }
+
+        // Handles Disconnects
+        async Task OnClientOnDisconnectedAsync(MqttClientDisconnectedEventArgs e)
+        {
+            if (cancellation.IsCancellationRequested)
+            {
+                return;
+            }
+
+            if (e.ClientWasConnected)
+            {
+                verboseOutput?.WriteLine("Disconnected. Retrying...");
+                await client.ConnectAsync(client.Options, cancellation);
+                verboseOutput?.WriteLine("Connected again");
+            }
+        }
     }
 
-    protected override void PostReadingDataLoop(IConsole console, CancellationToken cancellation, ConsoleWriter? verboseOutput)
+    protected override void PostReadingDataLoop(IConsole console, ConsoleWriter? verboseOutput)
     {
+        if (_mqttClient == null)
+        {
+            return;
+        }
+        if (!_mqttClient.IsConnected)
+        {
+            return;
+        }
+
+        try
+        {
+            verboseOutput?.WriteLine("Disconnecting from the MQTT Broker...");
+            _mqttClient.DisconnectAsync().Wait();
+            verboseOutput?.WriteLine("Disconnected.");
+        }
+        catch (Exception ex)
+        {
+            console.Error.WriteLine(ex.ToString());
+        }
+
     }
 
-    protected override void ValidateParameters(CancellationToken cancellation, ConsoleWriter? verboseOutput)
+    protected override void ValidateParameters()
     {
-        base.ValidateParameters(cancellation, verboseOutput);
+        base.ValidateParameters();
 
         if (string.IsNullOrEmpty(Broker))
         {
