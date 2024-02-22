@@ -8,6 +8,8 @@ using MQTTnet.Server;
 using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
+using OpenHardwareMonitor.Hardware;
+using System.Xml;
 
 namespace OpenHardwareMonitor.Pub;
 
@@ -53,16 +55,24 @@ public class MqttCommand : PubCommandBase
 
     [CommandOption(nameof(HomeAssistantDiscoveryPrefix), Description = "The topic prefix Home Assistant uses for automatic configuration")]
     public string HomeAssistantDiscoveryPrefix { get; set; } = "homeassistant";
-    
+
     // The MQTT Client
     private IMqttClient? _mqttClient;
 
-    
-    
+    /// <summary>
+    /// The sensors registered on Home Assistant
+    /// </summary>
+    private readonly ConcurrentDictionary<string, DateTime> _registeredHomeAssistantSensors = new();
+
     protected override void PublishData(SensorData sensorData, CancellationToken cancellation, ConsoleWriter? verboseOutput)
     {
         Debug.Assert(_mqttClient != null);
         Debug.Assert(sensorData != null);
+
+        if (HomeAssistant)
+        {
+            HandleHomeAssistantSensorRegistry(sensorData, cancellation, verboseOutput);
+        }
 
         var topic = sensorData.Topic;
         var dataAsJson = sensorData.ToJson();
@@ -97,6 +107,112 @@ public class MqttCommand : PubCommandBase
                 ? $"    error publishing at {topic} with reason {result.ReasonCode}!"
                 : $"    error publishing at {topic}!");
         }
+
+    }
+
+
+
+
+    /// <summary>
+    /// Handle Home Assistant sensor registration
+    /// </summary>
+    private void HandleHomeAssistantSensorRegistry(SensorData sensorData, CancellationToken cancellation, ConsoleWriter? verboseOutput)
+    {
+        if (!HomeAssistant)
+        {
+            return;
+        }
+
+        if (_registeredHomeAssistantSensors.ContainsKey(sensorData.Id))
+        {
+            return;
+        }
+
+        verboseOutput?.WriteLine($"Building auto discovery message for sensor {sensorData.Id}...");
+
+        var deviceObjectId = sensorData.Machine.ToLowerInvariant();
+        const string component = "sensor";
+        var nodeId = sensorData.Id.ToLowerInvariant().Replace('/', '_');
+
+        var deviceClass = sensorData.SensorType switch
+        {
+            SensorType.Voltage => "voltage",
+            SensorType.Clock => "frequency",
+            SensorType.Temperature => "temperature",
+            SensorType.Load => null,
+            SensorType.Fan => null,
+            SensorType.Flow => "volume_flow_rate",
+            SensorType.Control => null,
+            SensorType.Level => "volume",
+            SensorType.Factor => null,
+            SensorType.Power => "power",
+            SensorType.Data => "data_size",
+            SensorType.SmallData => "data_size",
+            SensorType.Throughput => "data_rate",
+            SensorType.RawValue => null,
+            SensorType.TimeSpan => "duration",
+            _ => throw new ArgumentOutOfRangeException()
+        };
+
+        var displayPrecision = sensorData.SensorType switch
+        {
+            SensorType.Voltage => 2,
+            SensorType.Load => 0,
+            SensorType.Temperature => 0,
+            _ => 1
+        };
+
+        var unit = sensorData.SensorType switch
+        {
+            SensorType.Voltage => "V",
+            SensorType.Clock => "MHz",
+            SensorType.Temperature => "°C",
+            SensorType.Load => "%",
+            SensorType.Fan => "rpm",
+            SensorType.Flow => "l/min",
+            SensorType.Control => null,
+            SensorType.Level => "l",
+            SensorType.Factor => null,
+            SensorType.Power => "W",
+            SensorType.Data => "MB",
+            SensorType.SmallData => "B",
+            SensorType.Throughput => "Mbit/s",
+            SensorType.RawValue => null,
+            SensorType.TimeSpan => "s",
+            _ => throw new ArgumentOutOfRangeException()
+        };
+
+        // Can skip some few publishing intervals and still be available 
+        var expireAfter = MinPublishInterval + PoolingInterval * 4;
+
+        var uniqueId = $"{deviceObjectId}_ohm_{nodeId}_{sensorData.SensorType}".ToLowerInvariant();
+
+        var configurationTopic = $"{HomeAssistantDiscoveryPrefix}/{component}/{nodeId}/{deviceObjectId}/config";
+
+        var configurationObject = new
+        {
+            device = new
+            {
+                name = sensorData.Machine,
+                identifiers = new[] { $"{sensorData.Machine}.ohm".ToLowerInvariant() }
+            },
+            name = sensorData.Name,
+            state_topic = sensorData.Topic,
+            device_class = deviceClass,
+            expire_after = expireAfter,
+            unique_id = uniqueId,
+            suggested_display_precision = displayPrecision,
+            state_class = "measurement",
+            unit_of_measurement = unit,
+            value_template = "{{ value_json.value | float }}"
+        };
+
+        var configurationMessage = JsonSerializer.Serialize(configurationObject);
+
+
+
+
+
 
     }
 

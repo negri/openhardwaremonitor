@@ -48,6 +48,7 @@ public record SensorData
     /// <summary>
     /// The MQTT Topic to be used
     /// </summary>
+    [JsonIgnore]
     public string Topic
     {
         get
