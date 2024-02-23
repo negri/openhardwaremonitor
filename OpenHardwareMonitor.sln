@@ -13,6 +13,7 @@ EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{F8FB5D14-2337-4E78-9333-90BE9A8E8F47}"
 	ProjectSection(SolutionItems) = preProject
 		.editorconfig = .editorconfig
+		README.md = README.md
 	EndProjectSection
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "OpenHardwareMonitorReport", "OpenHardwareMonitorReport\OpenHardwareMonitorReport.csproj", "{C0FE1C8B-3D85-4FA9-9343-547AD5DFAFFF}"
